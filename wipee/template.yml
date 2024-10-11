@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  WipeeApp
+
+  Functions supporting the Patient Info Domain
+
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+    Description: The stage name for API Gateway (e.g. dev, qa, staging, production)
+
+Resources:
+  ##########################################################################
+  #  API Gateway                                                           #
+  ##########################################################################
+
+  WipeeApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref StageName
+      Name: Patient Info API
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          title: Wipee API
+          version: "1.0"
+        securityDefinitions:
+          LambdaAuthorizer:
+            type: "apiKey"
+            name: "Authorization"
+            in: "header"
+            x-amazon-apigateway-authtype: "custom"
+            x-amazon-apigateway-authorizer:
+              authorizerResultTtlInSeconds: 300
+              identitySource: "method.request.header.Authorization"
+              authorizerCredentials:
+                Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/API_Gateway_Access_Role
+              authorizerUri:
+                Fn::Sub:
+                  - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Auth_Function}/invocations
+                  - { Auth_Function: !ImportValue api-gateway-authorizer-function-arn }
+        paths:
+          /user/profile/{userProfileId}:
+            get:
+              security:
+                - LambdaAuthorizer: []
+              responses:
+                "200":
+                  description: OK
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                passthroughBehavior: when_no_match
+                credentials:
+                  Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/API_Gateway_Access_Role
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetUserProfileFunction.Arn}/invocations
+            options:
+              responses:
+                "200":
+                  description: OK
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                passthroughBehavior: when_no_match
+                credentials:
+                  Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/API_Gateway_Access_Role
+                uri:
+                  Fn::Sub:
+                    - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CORS_Function}/invocations
+                    - { CORS_Function: !ImportValue api-gateway-cors-arn }
+          /user/profile:
+            post:
+              security:
+                - LambdaAuthorizer: []
+              responses:
+                "200":
+                  description: OK
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                passthroughBehavior: when_no_match
+                credentials:
+                  Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/API_Gateway_Access_Role
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PostUserProfileFunction.Arn}/invocations
+            options:
+              responses:
+                "200":
+                  description: OK
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                passthroughBehavior: when_no_match
+                credentials:
+                  Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/API_Gateway_Access_Role
+                uri:
+                  Fn::Sub:
+                    - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CORS_Function}/invocations
+                    - { CORS_Function: !ImportValue api-gateway-cors-arn }
+
+  ##########################################################################
+  #  Lambda Functions                                                      #
+  ##########################################################################
+
+  WipeeGetUserProfileFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: go1.x
+    Properties:
+      FunctionName: !Sub "get-user-profile-function-${StageName}"
+      CodeUri: wipee-auth/get-user-profile/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - arm64
+      Environment:
+        Variables:
+          LOG_LEVEL: !Ref LogLevel
+          IS_LOCAL: true
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserProfileTable
+
+  WipeePostUserProfileFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: go1.x
+    Properties:
+      FunctionName: !Sub "post-user-profile-function-${StageName}"
+      CodeUri: wipee-auth/post-user-profile/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - arm64
+      Environment:
+        Variables:
+          LOG_LEVEL: !Ref LogLevel
+          IS_LOCAL: true
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserProfileTable
+
+
+  ##########################################################################
+  #  Dynamo DB tables                                                      #
+  ##########################################################################
+
+  UserProfileTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      Tags:
+        - Key: 'billingTag'
+          Value: 'wipee-functions'
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      TableName: !Sub "UserProfileTable-${StageName}"
